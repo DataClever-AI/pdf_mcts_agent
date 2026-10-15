@@ -1,18 +1,75 @@
-# MVP v2 — Vectorless RAG for Manuals
+# PDF MCTS Agent — Vectorless RAG for PDF Manuals
 
-Bookmark-based tree builder + MCTS retrieval over PDF manuals. Single-page Streamlit app: upload PDF → build tree → query with LangGraph RAG agent.
+Ask questions about a technical PDF manual and get answers that cite the exact sections they came from.
+The PDF's own table of contents is turned into a section tree; a LangGraph agent then finds the right
+section by **searching that tree with a VLM-guided Monte Carlo Tree Search** — no embeddings and no
+vector database.
+
+- **Tree builder** — PDF bookmarks (or a synthetic TOC) + Docling content extraction → `tree.json`.
+- **Query agent** — LangGraph pipeline: guard → query expansion → BM25 retrieval → VLM ranking →
+  MCTS tree search → relevance-gated answer generation → judge (with one retry).
+- **Streamlit app** — upload a PDF, build and explore its tree, ask questions, rate answers.
+
+## How it works
+
+```mermaid
+flowchart LR
+    PDF[/PDF manual/] --> B[Tree builder<br/>bookmarks + Docling]
+    B --> T[(tree.json)]
+    Q[/Question/] --> G[Guard]
+    G --> R[BM25 retrieval<br/>+ VLM ranking]
+    T --> R
+    R --> M[MCTS tree search<br/>over the whole tree]
+    T --> M
+    M --> A[Relevance gate<br/>+ answer generation]
+    A --> J[Judge]
+    J -->|FAIL, retry once| A
+    J --> OUT[/Cited answer + section path/]
+```
+
+1. **Ingest once.** The manual becomes a tree of sections (chapters → sections → subsections),
+   each holding its text and tables and its page range.
+2. **Retrieve.** BM25 finds candidate sections; a VLM scores each one for relevance.
+3. **Search the tree.** MCTS descends from the chapters, scoring each node's children with the VLM
+   — chapters by their subsection titles, leaves by their content — and homes in on the section
+   that holds the answer. It can reach sections that share no words with the question.
+4. **Answer from verified evidence.** A per-section YES/NO gate keeps only sections that actually
+   answer the question; the generator answers from those and cites them by title and page.
+5. **Check.** A judge verifies safety and grounding, and triggers one retry on failure.
+
+Every VLM-backed stage has a deterministic fallback, so a degraded model server slows the agent
+down instead of breaking it. **For the full design — every node, the MCTS algorithm, the state
+model, the VLM client, configuration, measured results, and known limitations — read the
+[Agent Architecture Guide](langgraph_agent.md).**
+
+## Project layout
+
+```text
+src/
+  app.py              Streamlit UI (auth, upload, tree explorer, chat, feedback)
+  tree_builder/       PDF -> tree.json (bookmarks, Docling, section matching, export)
+  validation/         tree.json integrity checks (coverage, page precision, structure)
+  rag/                BM25 index, evidence expander, MCTS explorer, tree loader
+  agent/              LangGraph graph, nodes, prompts, state, routing
+  models/             Pydantic models (Section, EvidenceBundle, MCTS state, ...)
+  vlm/                The only module that calls the model server (retries, pacing)
+  persistence/        SQLite: users, feedback, corrections, MCTS runs
+scripts/              CLI tools: build_tree, validate_tree, query, view_memory, reset_state
+tests/                Unit tests (no network needed)
+langgraph_agent.md    Agent Architecture Guide
+```
 
 ## Requirements
 
 - Python >= 3.12
 - [uv](https://docs.astral.sh/uv/) (dependency manager)
-- Access to a VLM server (self-hosted, Qwen2.5-VL-7B via vLLM) for tree building and MCTS
+- Access to a VLM server (self-hosted, Qwen2.5-VL-7B via vLLM, OpenAI-compatible API) for ranking, MCTS scoring, answer generation and judging
 - (Optional) HuggingFace token for faster/authenticated Docling model downloads
 
 ## Install
 
 ```bash
-cd mvp_v2
+cd pdf_mcts_agent
 uv sync
 ```
 
@@ -26,7 +83,7 @@ cp .env.example .env
 
 Edit `.env`:
 
-```
+```dotenv
 HF_TOKEN=                 # optional, HuggingFace Hub token (Docling model download)
 LLM_BASE_URL=https://<VLM_HOST>/v1   # VLM server URL
 LLM_API_KEY=              # required — call_vlm() raises RuntimeError if unset
@@ -43,7 +100,7 @@ Opens the Streamlit UI (default `http://localhost:8501`). Flow: **Upload PDF →
 
 ## Run the scripts
 
-All scripts must be run from `mvp_v2/` root (they insert project root onto `sys.path`).
+All scripts must be run from the repository root (they insert the project root onto `sys.path`).
 
 ### `scripts/build_tree.py` — build tree.json from a PDF
 
@@ -110,7 +167,7 @@ uv run mypy .
 
 ## Docs
 
-- [langgraph_agent.md](langgraph_agent.md) — LangGraph agent design/architecture reference
+- [langgraph_agent.md](langgraph_agent.md) — Agent Architecture Guide: pipeline topology, node-by-node behaviour, the MCTS tree search, answer gating and judging, state and memory, VLM client, configuration, design decisions with measured results, and known limitations
 
 ## Deployment (Docker + AWS ECR) — for QA distribution
 
