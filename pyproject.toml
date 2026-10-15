@@ -1,0 +1,72 @@
+[project]
+name = "mvp-v2"
+version = "0.1.0"
+description = "Vectorless RAG MVP: bookmark-based tree builder + MCTS retrieval"
+requires-python = ">=3.12"
+dependencies = [
+    "docling>=2.0",
+    "pillow>=10.3",
+    "pydantic>=2.10",
+    "pymupdf>=1.24",
+    "rank-bm25>=0.2.2",
+    "openai>=1.30",
+    "python-dotenv>=1.0",
+    "langgraph>=1.2",
+    "langgraph-checkpoint-sqlite>=3.0",
+    "aiosqlite>=0.22",
+    "streamlit>=1.57",
+    "watchdog>=6.0.0",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+docling = ["docling>=2.0", "pillow>=10.3"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[dependency-groups]
+build = [
+    "cython>=3.2.8",
+    "setuptools>=81.0.0",
+]
+dev = [
+    "pytest>=9.0",
+    "pytest-cov>=7.1",
+    "ruff>=0.15",
+    "mypy>=2.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "--tb=short", "-q"]
+filterwarnings = [
+    "ignore:builtin type Swig.* has no __module__ attribute:DeprecationWarning",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+exclude = ["tests/"]
+
+[[tool.mypy.overrides]]
+module = ["pymupdf", "pymupdf.*", "docling.*", "rank_bm25", "langgraph.*", "aiosqlite"]
+ignore_missing_imports = true
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["src.tree_builder.fitz_toc", "src.tree_builder.docling_extract"]
+disallow_untyped_calls = false
+ignore_errors = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "RUF"]
